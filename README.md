@@ -131,7 +131,8 @@ La tabla transaccional `ClinicalDocumentRecords` mantiene una estructura uniform
 | `doc-02` | `pat-001` | `epi-99` | `CLIN_CONSENTIMIENTO_INFORMADO_V1` | `Signed` | `2026-06-06` | `{"document_storage": {...}}` |
 
 ---
-
+1. El Estado del Workflow (Status) → En la Columna RelacionalEfectivamente, como comentas, el estado general del consentimiento (si está en borrador, pendiente de firma, firmado o revocado) no va dentro del texto del JSON, sino en la columna relacional Status de la tabla.   ¿Por qué? Porque necesitas poder hacer consultas rápidas en SQL del tipo: "Muéstrame todos los consentimientos pendientes de firma de hoy" sin tener que abrir ni parsear miles de JSONs. Cuando el paciente firma, actualizas ese campo relacional de PendingSignature a Signed al instante.2. El Archivo Físico (PDF en Base64) → Fuera de la BD (Object Storage)Si el documento incluye un PDF o una firma biométrica en Base64, nunca se guarda dentro de la base de datos (ni en tablas ni en el JSON) para evitar saturarla. El archivo se sube a un Object Storage (como Azure Blob Storage o S3), y en el JSON del consentimiento solo se guarda la URL o referencia para poder descargarlo.   3. El Detalle del Consentimiento (Riesgos explicados, datos de la cirugía) → En el PayloadJsonAunque el estado y el PDF se gestionan externamente, los datos clínicos del documento (qué riesgos se le explicaron al paciente, qué tipo de intervención quirúrgica es, el código del procedimiento y la fecha en que se le informó) sí se guardan dentro del PayloadJson de ese registro, asociado a su EpisodeId correspondiente (para atarlo a esa intervención concreta).
+2. 
 ## 9. Extensibilidad: Cómo añadir un nuevo atributo
 Para añadir un campo nuevo (ej. `"verification_method"` en alergias):
 1. **Actualizar el DTO (`AllergyItemDto.cs`):** Añadir la propiedad `VerificationMethod`.
