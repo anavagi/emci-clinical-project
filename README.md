@@ -146,30 +146,40 @@ validadores `FluentValidation` y endpoints de aplicación.
 
 ### Diagrama de Arquitectura .NET bajo Estándar EMCI
 
-```mermaid
-flowchart TB
-    subgraph Core["Nucleo Global EMCI - Core Clinico"]
-        P["Patients - Maestro Transversal"]
-        CDR["ClinicalDocumentRecords - Contenedor Universal"]
-    end
+```text
+                 ┌────────────────────────────────────────┐
+                 │          EXPEDIENT (Maestro Pura)      │
+                 │          - ExpedientId (DNI / HC)      │
+                 └───────────────────┬────────────────────┘
+          ┌──────────────────────────┴──────────────────────────┐
+          ▼                                                     ▼
+┌─────────────────────────────────────────┐         ┌─────────────────────────┐
+│     MÓDULO TRANSVERSAL (AiR Alergias)   │         │    MÓDULOS CLÍNICOS     │
+│ - PatientAllergies (Resumen Activo)     │         │    (Urgencias, CCEE)    │
+│ - EpisodeId: NULL (Global de paciente)  │         └────────────┬────────────┘
+└─────────────────────────────────────────>                      │
+                                                                 ▼
+                                                    ┌─────────────────────────┐
+                                                    │        EPISODIO         │
+                                                    │   (EpisodeId: GUID)     │
+                                                    └────────────┬────────────┘
+                                                                 │
+                                                                 │ Genera documento clínico contextual
+                                                                 ▼
+                                                    ┌─────────────────────────┐
+                                                    │ CLINICALDOCUMENTRECORDS │
+                                                    │ - Contenedor Universal  │
+                                                    │ - TemplateCode (Ci, etc)│
+                                                    │ - PayloadJson dinámico  │
+                                                    └─────────────────────────┘
 
-    subgraph ModuloAiR["Modulo AiR - Alergias"]
-        PA["PatientAllergies - Resumen Activo y JSON"]
-    end
+### Conceptos Fundamentales
 
-    subgraph OtrosModulos["Otros Modulos Clinicos"]
-        TR["Modulo de Triaje"]
-        QN["Modulo de Consentimientos y Notas"]
-    end
-
-    P -->|1:N ExpedientId| CDR
-    P -->|1:N ExpedientId| PA
-    ModuloAiR -->|Actualiza estado| PA
-    ModuloAiR -->|TemplateCode EMCI ALLERGY COMPOSITION| CDR
-    TR -->|TemplateCode EMCI URG TRIAGE| CDR
-    QN -->|TemplateCode EMCI INFORMED CONSENT| CDR
-
----
+1. **Expedient (`Patients` / `Expedient`):** Es la entidad maestra pura de la que nace toda la información del sistema. Se identifica de forma única mediante el `ExpedientId` (DNI, Historia Clínica, etc.).
+2. **Episodio (`EpisodeId`):** Representa un acto asistencial acotado en el tiempo (un ingreso hospitalario, una consulta externa, una atención en urgencias o una intervención quirúrgica). Se identifica mediante un `GUID`.
+3. **Módulos Transversales (Ej. Módulo AiR - Alergias):** Gestionan información clínica crónica o permanente del paciente. Su ámbito es global y no están atados a un episodio concreto (`EpisodeId = NULL`).
+4. **Módulos Contextuales (Ej. Consentimientos Informados, Triaje, Quirófano):** Gestionan actos asistenciales específicos asociados a un episodio obligatorio.
+5. **Contenedor Universal (`ClinicalDocumentRecords` - CDR):** Es la tabla universal donde convergen y se almacenan todos los documentos clínicos formalizados mediante `PayloadJson` y un `TemplateCode` maestro.
 
 ## 7. Casos de Uso de Persistencia
 
@@ -252,8 +262,15 @@ La tabla transaccional `ClinicalDocumentRecords` conserva una estructura relacio
 | `doc-02` | `exp-001` | `epi-99` | `EMCI_INFORMED_CONSENT_V1` | `Signed` | `2026-06-06` | `{"intervention_details": {...}, "document_storage": {...}}` |
 
 ---
+## 10. Estrategia de Persistencia: Espejo Ligero vs. CDR
 
-## 10. Estrategias de Acceso y Consulta sobre Datos JSON
+Para resolver el dilema entre rendimiento de lectura y auditoría completa, EMCI divide la persistencia de datos transversales en dos capas:
+
+- Tabla Ligera (PatientAllergies): Almacena únicamente el estado activo actual del paciente con columnas relacionales puras y planas (CausalAgent, Severity, IsActive). Permite consultas en milisegundos para mostrar alertas de alergias en la cabecera del sistema o validar prescripciones farmacéuticas.
+
+- Tabla Universal (ClinicalDocumentRecords): Almacena la composición documental completa de cualquier cambio u orden de alergia mediante un PayloadJson inalterable, garantizando trazabilidad y validez legal (EpisodeId = NULL).
+
+## 11. Estrategias de Acceso y Consulta sobre Datos JSON
 
 Para recuperar o filtrar información almacenada en columnas JSON dentro de la arquitectura EMCI, se definen dos patrones según el caso de uso:
 
