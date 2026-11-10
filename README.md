@@ -138,3 +138,52 @@ Para añadir un campo nuevo (ej. `"verification_method"` en alergias):
 1. **Actualizar el DTO (`AllergyItemDto.cs`):** Añadir la propiedad `VerificationMethod`.
 2. **Actualizar el Validador (`AllergyPayloadValidator.cs`):** Incluir las reglas de `FluentValidation`.
 3. **No se requiere migración de BD SQL.**
+
+ClinicalDocumentRecords no es una tabla exclusiva del módulo de alergias (AiR), sino el contenedor universal (Repositorio Documental Clínico / CDR) del que cuelgan todos los actos, formularios, evolutivos
+y procesos asistenciales del paciente a lo largo de su historia clínica.
+  ──────
+  ### ¿Por qué debe estar globalizada?
+
+  1. Una sola tabla para múltiples dominios clínicos (TemplateCode como discriminador)
+  En lugar de crear decenas de tablas por cada especialidad (SurgicalNotes, TriageRecords, InformedConsents, PatientAllergyAudits, NursingAssessments), todos los procesos contextuales escriben en
+  ClinicalDocumentRecords. Lo que distingue un proceso de otro es el campo TemplateCode y la estructura interna de su PayloadJson:
+      • TemplateCode = "OPENEHR_ALLERGY_V1" -> Auditoría/composición de alergias (AiR).
+      • TemplateCode = "TRIAGE_URG_V2" -> Informe de triaje de urgencias.
+      • TemplateCode = "CONSENT_SURGERY_V1" -> Consentimiento informado quirúrgico.
+  2. Visión 360º del Episodio y del Paciente sin JOINs masivos
+  Al estar globalizada e indexada por PatientId y EpisodeId, cualquier visor clínico (timeline del paciente o carpeta de un episodio asistencial) puede recuperar toda la actividad clínica de un ingreso o
+  consulta con una única consulta SQL:
+    SELECT Id, TemplateCode, Status, RecordedAt, PayloadJson
+    FROM dbo.ClinicalDocumentRecords
+    WHERE PatientId = @expedient AND EpisodeId = @episodeId
+    ORDER BY RecordedAt DESC;
+
+  ──────
+  ### ¿Cómo se organiza entonces a nivel de Arquitectura (.NET)?
+
+  │ Diagram exceeds terminal width (304 > 208 cols)
+  │ Displayed as code block. Widen terminal to view inline.
+
+    flowchart TB
+        subgraph Core["Núcleo Global EMCI (Shared Kernel / Core Clínico)"]
+            P["Patients (Transversal)"]
+            CDR["ClinicalDocumentRecords (Contenedor Universal Contextual)"]
+        end
+
+        subgraph ModuloAiR["Módulo AiR (Alergias)"]
+            PA["PatientAllergies (Resumen Transversal Activo)"]
+        end
+
+        subgraph OtrosModulos["Otros Módulos Clínicos (Urgencias, Quirófano, CCEE)"]
+            TR["Lógica de Triaje"]
+            QN["Lógica de Notas Quirúrgicas"]
+        end
+
+        P -->|1:N PatientId| CDR
+        P -->|1:N Expedient| PA
+        ModuloAiR -->|Registra composiciones / versiones con TemplateCode = ALLERGY| CDR
+        OtrosModulos -->|Registra documentos con su propio TemplateCode| CDR
+## Visualizacion
+De hecho, crear un "EMCI Template Explorer" (un visor visual de plantillas estilo Swagger) es una excelente idea en una arquitectura basada en este estándar.
+Dado que el contenido dinámico de tus formularios vive en los DTOs y se serializa en el PayloadJson de la tabla relacional, puedes construir un mini-dashboard o un endpoint de metadatos que actúe exactamente igual que Swagger: leyendo por reflexión los tipos de datos, los schemas y las validaciones de tus plantillas (TemplateCode).
+
