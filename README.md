@@ -187,3 +187,57 @@ y procesos asistenciales del paciente a lo largo de su historia clínica.
 De hecho, crear un "EMCI Template Explorer" (un visor visual de plantillas estilo Swagger) es una excelente idea en una arquitectura basada en este estándar.
 Dado que el contenido dinámico de tus formularios vive en los DTOs y se serializa en el PayloadJson de la tabla relacional, puedes construir un mini-dashboard o un endpoint de metadatos que actúe exactamente igual que Swagger: leyendo por reflexión los tipos de datos, los schemas y las validaciones de tus plantillas (TemplateCode).
 
+
+## Acceso a los datos del payload
+Para acceder a los datos que se encuentran almacenados dentro del PayloadJson en tu base de datos relacional, tienes dos enfoques principales dependiendo de lo que necesites hacer:
+
+Opción 1: Deserialización a objetos tipados (C# / En memoria)
+Este es el método más habitual y limpio cuando un microservicio o controlador necesita procesar, validar o mostrar el contenido de un formulario clínico (por ejemplo, para pintar los detalles de una alergia en una pantalla).
+
+Consiste en recuperar el registro relacional de la tabla ClinicalDocumentRecords y utilizar System.Text.Json para convertir el texto JSON de vuelta a tu DTO en C# (AllergyPayloadDto):
+
+```
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
+using EmciDemo.Models;
+
+[HttpGet("{id}")]
+public async Task<IActionResult> GetClinicalDocument(Guid id)
+{
+    // 1. Buscamos el registro en la tabla relacional base
+    var record = await _context.ClinicalDocumentRecords.FindAsync(id);
+    if (record == null) return NotFound();
+
+    // 2. Deserializamos el PayloadJson al DTO tipado correspondiente según su TemplateCode
+    if (record.TemplateCode == "CLIN_REGISTRO_ALERGIAS_V1")
+    {
+        var allergyPayload = JsonSerializer.Deserialize<AllergyPayloadDto>(record.PayloadJson);
+        
+        // 3. ¡Listo! Ya puedes acceder a los datos tipados con total seguridad
+        return Ok(new 
+        {
+            record.PatientId,
+            record.Status,
+            AllergiesList = allergyPayload?.Allergies
+        });
+    }
+
+    return BadRequest(new { Message = "Plantilla no soportada por este endpoint." });
+}
+```
+
+Opción 2: Consultas directas sobre el JSON desde EF Core (Para búsquedas en BD)
+Si lo que buscas es filtrar o consultar registros directamente en la base de datos sin tener que deserializar todos los documentos (por ejemplo: "Buscar todos los registros de un paciente donde alguna alergia tenga severidad 'Severa'"), Entity Framework Core (a partir de EF Core 7/8) permite consultar dentro de campos JSON utilizando funciones nativas como EF.Functions.JsonValue.
+
+```
+using Microsoft.EntityFrameworkCore;
+
+// Ejemplo: Buscar registros de alergias de un paciente específico donde la severidad sea 'Severa'
+var severeAllergyRecords = await _context.ClinicalDocumentRecords
+    .Where(r => r.PatientId == patientId && 
+                r.TemplateCode == "CLIN_REGISTRO_ALERGIAS_V1" &&
+                // Consultamos directamente una propiedad anidada dentro del JSON (sintaxis JSON Path)
+                EF.Functions.JsonValue(r.PayloadJson, "$.allergies[0].severity") == "Severa")
+    .ToListAsync();
+```
